@@ -1,0 +1,1968 @@
+<!DOCTYPE html>
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+    <script src="GraphicsProjectSrc/scripts/three.js"></script>
+    <script src="GraphicsProjectSrc/scripts/proctree.js"></script>
+    <script src="GraphicsProjectSrc/scripts/water.js"></script>
+    <script src="GraphicsProjectSrc/scripts/NURBS/nurbsUtils.js"></script>
+    <script src="GraphicsProjectSrc/scripts/NURBS/nurbsSurface.js"></script>
+    <script src="GraphicsProjectSrc/scripts/nurbsFlag.js"></script>
+    <script src="GraphicsProjectSrc/scripts/ZERO.js"></script> 
+    <script src="GraphicsProjectSrc/scripts/Render.js"></script>
+    <script src="GraphicsProjectSrc/scripts/shaders.js"></script>
+    <script src="GraphicsProjectSrc/scripts/OBJLoader.js"></script>
+    <script src="GraphicsProjectSrc/scripts/MTLLoader.js"></script>
+    <script id="vs" type="x-shader/x-vertex">
+
+        varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ); }
+
+    </script>
+
+    <script id="fs" type="x-shader/x-fragment">
+
+        uniform sampler2D map; uniform vec3 fogColor; uniform float fogNear; uniform float fogFar; varying vec2 vUv; void main()
+        { float depth = gl_FragCoord.z / gl_FragCoord.w; float fogFactor = smoothstep( fogNear, fogFar, depth ); gl_FragColor
+        = texture2D( map, vUv ); gl_FragColor.w *= pow( gl_FragCoord.z, 20.0 ); gl_FragColor = mix( gl_FragColor, vec4( fogColor,
+        gl_FragColor.w ), fogFactor ); }
+
+    </script>
+    <link rel="stylesheet" href="GraphicsProjectSrc/css/style.css">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+</head>
+
+<body onload="init()">
+    <div class="mask">
+            <div class="content">	
+                <!-- <div class="score-container">
+                    <p class="title">本次得分</>
+                    <p class="score">0</h1>
+                </div> -->
+                    <button class="restart">
+                        Press to Start
+                    </button>
+            </div>
+        </div>
+    <script>
+            var mask = document.querySelector('.mask')
+            var button = document.querySelector('.restart')
+    
+            button.addEventListener('click', startWebgl)
+            var humanMixer, monsterMixer;
+            var loadcomplete = false;
+            var camera, scene, renderer, directionalLight;
+            var roads = []
+            var road, nextRoad
+            var roadSideGeometry = new Array(3)
+            var roadGeometry = new Array(3)
+            var roadSideMaterial = new Array(3)
+            var roadMaterial = new Array(3)
+            var cloudGeometry
+            var itemGeometry
+            var speedTexture, shieldTexture
+            var humanmesh, skyboxmesh, grassmesh, monstermesh, ballmesh, textmesh, scoremesh;
+            var humanBoundingBox
+            var skeleton;
+            var shieldTime = 0, speedTime = 0
+            var isShield = false, isSpeed = false
+            var idleAction, walkAction, runAction;
+            var actions;
+            var treeOptions, woodOptions
+            var ground
+            var score = 0;
+            //var treemesh;
+            var treeGenerator;
+            var tree = new Array(3);
+            var mountainTexture
+            var barkTexture, barkTexture_b, leafesTexture, leafesTexture_b
+            var twigsTexture
+            var grasslandTexture, grassTexture1, grassTexture2, flowerTexture1, flowerTexture2
+            var goldenTexture
+            var flagTexture
+            var coinTexture
+            var grassPositions1, grassPositions2, flowerPositions1, flowerPositions2
+            var grassland
+            var flagmesh
+            var flag = 1
+            // 0 z-  1 x+  2 z+  3 x-
+            var currentRoadIndex = 0;
+            var currentDirection = 0;
+            var treeDownProbability = 0.02
+            var coinProbability = 0.2
+            var destination = new Array(0, 0, 0)
+            var preDestination = new Array(0, 0, 0)
+            var clock = new THREE.Clock();
+            var drop = true, run = false
+            var rotationX = -Math.PI / 2
+    
+            var velocity = new THREE.Vector3();
+            var birdmesh;
+            var isJump = false
+            var getHighest = false
+            var stop = false
+            var vy = 250
+            var start, end
+            var dead = false
+            var trees = []
+            var wood
+            var url = 'GraphicsProjectSrc/models/marine/marine_anims_core.json';
+            var text = "Earcut",
+    
+                height = 20,
+                size = 70,
+                hover = 30,
+    
+                curveSegments = 4,
+    
+                bevelThickness = 2,
+                bevelSize = 1.5,
+                bevelSegments = 3,
+                bevelEnabled = true,
+    
+                font = undefined,
+    
+                fontName = "optimer", // helvetiker, optimer, gentilis, droid sans, droid serif
+                fontWeight = "bold"; // normal bold
+    
+    
+            // Helper function to transform the vertices and faces
+            function newTreeGeometry(tree, isTwigs) {
+                var output = new THREE.Geometry();
+    
+                tree[isTwigs ? 'vertsTwig' : 'verts'].forEach(function (v) {
+                    output.vertices.push(new THREE.Vector3(v[0], v[1], v[2]));
+                });
+    
+                var uv = isTwigs ? tree.uvsTwig : tree.UV;
+                tree[isTwigs ? 'facesTwig' : 'faces'].forEach(function (f) {
+                    output.faces.push(new THREE.Face3(f[0], f[1], f[2]));
+                    output.faceVertexUvs[0].push(f.map(function (v) {
+                        return new THREE.Vector2(uv[v][0], uv[v][1]);
+                    }));
+                });
+    
+                output.computeFaceNormals();
+                output.computeVertexNormals(true);
+    
+                return output;
+            }
+    
+            function Item(type) {
+                this.type = type
+                // 0 speed    1 shield
+                if (this.type == 0) {
+                    var mesh = new THREE.Mesh(itemGeometry, new THREE.MeshPhongMaterial({map: speedTexture}))
+                } else if (this.type == 1) {
+                    var mesh = new THREE.Mesh(itemGeometry, new THREE.MeshPhongMaterial({map: shieldTexture}))
+                }
+                this.mesh = mesh
+            }
+            function Cloud() {
+                var plane = new THREE.Mesh(cloudGeometry);
+    
+                for ( var i = -4000; i < 4000; i++ ) {
+                    var x = (Math.random() * 1000 - 500)/30
+                    if(x <= 1 && x >= -1) {
+                        x += 2
+                    }
+                    plane.position.x = (Math.random() * 1000 - 500)/30;
+                    plane.position.y = -1;
+                    plane.position.z = i / 200;
+                    plane.rotation.z = Math.random() * Math.PI;
+                    //plane.rotation.x = plane.rotation.y = Math.random() * Math.PI * 0.1
+                    plane.scale.x = plane.scale.y = Math.random() * Math.random() * 1.5 + 0.5;
+    
+                    THREE.GeometryUtils.merge( geometry, plane );
+    
+                }
+                //this.mesh = 
+            }
+    
+            function RandomNum(Min, Max) {
+                var cha = Max - Min;
+                // 产生大于等于Min， 小于Max的随机数
+                var randomNub = Min + (Math.floor(Math.random() * cha));
+                return randomNub
+            }
+    
+            // 金币
+            var Coin = function () {
+                var geometry = new THREE.CylinderBufferGeometry(0.1, 0.1, 0.02, 20, 20)
+                var material = new THREE.MeshPhongMaterial({
+                    color: 0xffff90,
+                    map: goldenTexture
+                })
+                this.mesh = new THREE.Mesh(geometry, material)
+                this.type = 2
+                this.mesh.rotateZ(-Math.PI / 2)
+            }
+            // 即树干，周五加，再封装一个tree，通过treeManager管理生成的几种树
+            var Barrier = function (type) {
+                this.type = type
+                if (this.type == 0) {
+                    // 满道
+                    var geometry = new THREE.CylinderBufferGeometry(0.1, 0.1, 1.2, 20, 20)
+                    var material = new THREE.MeshPhongMaterial({
+                        map: barkTexture,
+                        normalMap: barkTexture_b,
+                        ambient: 0x666666,
+                        diffuse: 0xffffff
+                    })
+                } else if (this.type == 1) {
+                    // 左半道
+                    var geometry = new THREE.CylinderBufferGeometry(0.1, 0.1, 0.6, 20, 20)
+                    var material = new THREE.MeshPhongMaterial({
+                        map: barkTexture,
+                        normalMap: barkTexture_b,
+                        ambient: 0x666666,
+                        diffuse: 0xffffff
+                    })
+                } else if (this.type == 2) {
+                    // 右半道
+                    var geometry = new THREE.CylinderBufferGeometry(0.1, 0.1, 0.6, 20, 20)
+                    var material = new THREE.MeshPhongMaterial({
+                        map: barkTexture,
+                        normalMap: barkTexture_b,
+                        ambient: 0x666666,
+                        diffuse: 0xffffff
+                    })
+                }
+                this.mesh = new THREE.Mesh(geometry, material)
+                this.mesh.rotateZ(-Math.PI / 2)
+            }
+            createGrassTufts = function (positions) {
+                // create the initial geometry
+                var geometry = new THREE.PlaneGeometry(0.4, 0.2)
+    
+                // create each tuft and merge their geometry for performance
+                var mergedGeo = new THREE.Geometry();
+                for (var i = 0; i < positions.length; i++) {
+                    var position = positions[i]
+                    var baseAngle = Math.PI * 2 * Math.random()
+    
+                    var nPlanes = 2
+                    for (var j = 0; j < nPlanes; j++) {
+                        var angle = baseAngle + j * Math.PI / nPlanes
+    
+                        // First plane
+                        var object3d = new THREE.Mesh(geometry, material)
+                        object3d.rotateY(angle)
+                        object3d.position.copy(position)
+                        mergedGeo.mergeMesh(object3d)
+                        //THREE.GeometryUtils.merge( mergedGeo, object3d );
+    
+                        // The other side of the plane
+                        // - impossible to use ```side : THREE.BothSide``` as 
+                        //   it would mess up the normals
+                        var object3d = new THREE.Mesh(geometry, material)
+                        object3d.rotateY(angle + Math.PI)
+                        object3d.position.copy(position)
+                        mergedGeo.mergeMesh(object3d)
+                        //THREE.GeometryUtils.merge( mergedGeo, object3d );
+                    }
+                }
+    
+    
+                // load the texture
+                var textureUrl = 'GraphicsProjectSrc/images/grass01.png'
+                var texture = THREE.ImageUtils.loadTexture(textureUrl)
+                // build the material
+                var material = new THREE.MeshPhongMaterial({
+                    map: texture,
+                    color: 'grey',
+                    emissive: 'darkgreen',
+                    alphaTest: 0.7,
+                })
+                // create the mesh
+                var mesh = new THREE.Mesh(mergedGeo, material)
+                return mesh
+            }
+            // 草地
+            var GrassLand = function () {
+                this.grassmesh = new THREE.Object3D()
+                // build object3d
+                var geometry = new THREE.PlaneBufferGeometry(20, 20)
+                var material = new THREE.MeshPhongMaterial({
+                    map: grasslandTexture,
+                    //emissive: 'green',
+                })
+                var object3d = new THREE.Mesh(geometry, material)
+                object3d.scale.set(2, 2, 2)
+                object3d.position.set(0, -0.1, 0)
+                object3d.rotateX(-Math.PI / 2)
+                this.grassmesh.add(object3d)
+    
+                //////////////////////////////////////////////////////////////////////////////////
+                //		comment								//
+                //////////////////////////////////////////////////////////////////////////////////
+    
+                var mesh = createGrassTufts(grassPositions1)
+                mesh.scale.set(2, 2, 2)
+                this.grassmesh.add(mesh)
+    
+                // load the texture
+                mesh.material.map = grassTexture1
+                mesh.material.alphaTest = 0.7
+    
+                //////////////////////////////////////////////////////////////////////////////////
+                //		comment								//
+                //////////////////////////////////////////////////////////////////////////////////
+    
+                var mesh = createGrassTufts(grassPositions2)
+                mesh.scale.set(2, 2, 2)
+                this.grassmesh.add(mesh)
+    
+                // load the texture
+    
+                mesh.material.map = grassTexture2
+                mesh.material.alphaTest = 0.7
+    
+                //////////////////////////////////////////////////////////////////////////////////
+                //		comment								//
+                //////////////////////////////////////////////////////////////////////////////////
+    
+                var mesh = createGrassTufts(flowerPositions1)
+                mesh.scale.set(2, 2, 2)
+                this.grassmesh.add(mesh)
+    
+                // load the texture
+                mesh.material.map = flowerTexture1
+                mesh.material.emissive.set(0x888888)
+                mesh.material.alphaTest = 0.7
+    
+                //////////////////////////////////////////////////////////////////////////////////
+                //		comment								//
+                //////////////////////////////////////////////////////////////////////////////////
+    
+                var mesh = createGrassTufts(flowerPositions2)
+                mesh.scale.set(2, 2, 2)
+                this.grassmesh.add(mesh)
+    
+                // load the texture
+                mesh.material.map = flowerTexture2
+                mesh.material.emissive.set(0x888888)
+                mesh.material.alphaTest = 0.7
+    
+            }
+            // 路边装饰
+            var RoadSide = function () {
+                this.roadSideMesh = new THREE.Object3D()
+                var up = new THREE.Mesh(roadSideGeometry[0], roadSideMaterial[0])
+                var middle = new THREE.Mesh(roadSideGeometry[1], roadSideMaterial[1])
+                var bottom = new THREE.Mesh(roadSideGeometry[2], roadSideMaterial[2])
+                up.rotateZ(-Math.PI / 2);
+                up.position.set(0, 0.2, 0)
+                middle.position.set(0, 0.1, 0)
+                this.roadSideMesh.add(up)
+                this.roadSideMesh.add(middle)
+                this.roadSideMesh.add(bottom)
+            }
+            // 路面
+            var Road = function () {
+                this.roadMesh = new THREE.Object3D();
+                this.roadSidesInUse = []
+                this.treemeshes = []
+                this.hasChildren = false;
+                this.nextRoad = false;
+                this.complete = false;
+                this.direction = 0;
+                this.startUpdate = false;
+                this.coinsInUse = []
+                this.barriers = []
+    
+                this.roadMesh.receiveShadow = true
+                var mesh = new THREE.Mesh(roadGeometry, roadMaterial);
+                mesh.position.set(0, 0, 0);
+                this.roadMesh.add(mesh);
+       
+                for (var i = -25; i < 25; i++) {
+                    var p = Math.random()
+                    if (p <= coinProbability) {
+                        var s = RandomNum(-1, 2)
+                        var coin = new Coin()
+                        coin.mesh.position.set(s * 0.3, 0.2, i * 0.4)
+                        coin.mesh.recevieShadow = true
+                        this.coinsInUse.push(coin)
+                        this.roadMesh.add(coin.mesh)
+                    } else if (p > coinProbability && p <= coinProbability + 0.01) {
+                        // speed
+                        var speedItem = new Item(0)
+                        speedItem.mesh.position.set(0, 0.3, i * 0.4)
+                        this.coinsInUse.push(speedItem)
+                        this.roadMesh.add(speedItem.mesh)
+                    } else if (p > coinProbability + 0.09 && p <= coinProbability + 0.1) {
+                        // shield
+                        var shieldItem = new Item(1)
+                        shieldItem.mesh.position.set(0, 0.2, i * 0.4)
+                        this.coinsInUse.push(shieldItem)
+                        this.roadMesh.add(shieldItem.mesh)
+                    }
+                    var roadSideLeft = new RoadSide()
+                    this.roadSidesInUse.push(roadSideLeft)
+                    roadSideLeft.roadSideMesh.position.set(-0.5, 0, i * 0.4);
+                    this.roadMesh.add(roadSideLeft.roadSideMesh);
+                    roadSideLeft.roadSideMesh.recevieShadow = true
+                    var roadSideRight = new RoadSide()
+                    this.roadSidesInUse.push(roadSideRight)
+                    roadSideRight.roadSideMesh.position.set(0.5, 0, i * 0.4);
+                    this.roadMesh.add(roadSideRight.roadSideMesh);
+                    roadSideRight.roadSideMesh.recevieShadow = true
+                    var p = Math.random()
+                    if (p <= treeDownProbability) {
+                        var barrier = new Barrier(0)
+                        barrier.mesh.position.set(0, 0.2, i * 0.4 - 0.2)
+                        this.barriers.push(barrier)
+                        this.roadMesh.add(barrier.mesh)
+                    } else if (p > treeDownProbability && p <= treeDownProbability + 0.02) {
+                        var barrier = new Barrier(1)
+                        barrier.mesh.position.set(-0.3, 0.2, i * 0.4 - 0.2)
+                        this.barriers.push(barrier)
+                        this.roadMesh.add(barrier.mesh)
+                    } else if (p > treeDownProbability + 0.02 && p <= treeDownProbability + 0.04) {
+                        var barrier = new Barrier(2)
+                        barrier.mesh.position.set(0.3, 0.2, i * 0.4 - 0.2)
+                        this.barriers.push(barrier)
+                        this.roadMesh.add(barrier.mesh)
+                    }
+                }
+                //console.log("start clone")
+                for (var i = -6; i < 7; i++) {
+                    var random = RandomNum(0,3)
+                    this.treemeshes.push(tree[random].clone())
+                    this.treemeshes[this.treemeshes.length - 1].position.set(-0.7, -0.1, i * 1.5)
+                    this.roadMesh.add(this.treemeshes[this.treemeshes.length - 1])
+                    random = RandomNum(0,3)
+                    this.treemeshes.push(tree[random].clone())
+                    this.treemeshes[this.treemeshes.length - 1].position.set(0.7, -0.1, i * 1.5)
+                    this.roadMesh.add(this.treemeshes[this.treemeshes.length - 1])
+                }
+                //console.log("finish clone")
+                this.setFlags = function () {
+                    if (!this.nextRoad && !this.hasChildren) {
+                        if (this.direction == 0 && humanmesh.position.z < this.roadMesh.position.z) {
+                            this.nextRoad = true
+                        } else if (this.direction == 1 && humanmesh.position.x > this.roadMesh.position.x) {
+                            this.nextRoad = true
+                        } else if (this.direction == 2 && humanmesh.position.z > this.roadMesh.position.z) {
+                            this.nextRoad = true
+                        } else if (this.direction == 3 && humanmesh.position.x < this.roadMesh.position.x) {
+                            this.nextRoad = true
+                        }
+                    }
+                    if (!this.complete) {
+                        if (this.direction == 0 && humanmesh.position.z < preDestination[2] + 0.5) {
+                            this.complete = true
+                        } else if (this.direction == 1 && humanmesh.position.x > preDestination[0] - 0.5) {
+                            this.complete = true
+                        } else if (this.direction == 2 && humanmesh.position.z > preDestination[2] - 0.5) {
+                            this.complete = true
+                        } else if (this.direction == 3 && humanmesh.position.x < preDestination[0] + 0.5) {
+                            this.complete = true
+                        }
+                    }
+                }
+                this.update = function () {
+                    if (this.startUpdate) {
+                        for (var i = 0; i < this.roadSidesInUse.length; i++) {
+                            if (this.direction == 0 && this.roadSidesInUse[i].roadSideMesh.position.z + this.roadMesh
+                                .position.z > humanmesh.position.z + 1.0) {
+                                this.roadMesh.remove(this.roadSidesInUse[i].roadSideMesh)
+                                this.roadSidesInUse.splice(i, 1)
+                            } else if (this.direction == 1 && this.roadSidesInUse[i].roadSideMesh.position.z +
+                                humanmesh.position.x > this.roadMesh.position.x + 1.0) {
+                                this.roadMesh.remove(this.roadSidesInUse[i].roadSideMesh)
+                                this.roadSidesInUse.splice(i, 1)
+                            } else if (this.direction == 2 && this.roadSidesInUse[i].roadSideMesh.position.z +
+                                humanmesh.position.z > this.roadMesh.position.z + 1.0) {
+                                this.roadMesh.remove(this.roadSidesInUse[i].roadSideMesh)
+                                this.roadSidesInUse.splice(i, 1)
+                            } else if (this.direction == 3 && this.roadSidesInUse[i].roadSideMesh.position.z + this
+                                .roadMesh.position.x > humanmesh.position.x + 1.0) {
+                                this.roadMesh.remove(this.roadSidesInUse[i].roadSideMesh)
+                                this.roadSidesInUse.splice(i, 1)
+                            }
+                        }
+                        for (var i = 0; i < this.treemeshes.length; i++) {
+                            if (this.direction == 0 && this.treemeshes[i].position.z + this.roadMesh.position.z >
+                                humanmesh.position.z + 1.0) {
+                                // console.log("-")
+                                // this.treemeshes[i].position.z -= trees.length * 2.5
+                                this.roadMesh.remove(this.treemeshes[i])
+                                this.treemeshes.splice(i, 1)
+                            } else if (this.direction == 1 && this.treemeshes[i].position.z + humanmesh.position.x >
+                                this.roadMesh.position.x + 1.0) {
+                                // console.log("-")
+                                // this.treemeshes[i].position.z -= trees.length * 2.5
+                                this.roadMesh.remove(this.treemeshes[i])
+                                this.treemeshes.splice(i, 1)
+                            } else if (this.direction == 2 && this.treemeshes[i].position.z + humanmesh.position.z >
+                                this.roadMesh.position.z + 1.0) {
+                                // console.log("-")
+                                // this.treemeshes[i].position.z -= trees.length * 2.5
+                                this.roadMesh.remove(this.treemeshes[i])
+                                this.treemeshes.splice(i, 1)
+                            } else if (this.direction == 3 && this.treemeshes[i].position.z + this.roadMesh.position
+                                .x > humanmesh.position.x + 1.) {
+                                // console.log("-")
+                                // this.treemeshes[i].position.z -= trees.length * 2.5
+                                this.roadMesh.remove(this.treemeshes[i])
+                                this.treemeshes.splice(i, 1)
+                            }
+                        }
+                        for (var i = 0; i < this.coinsInUse.length; i++) {
+                            if (isSpeed) {
+                                if (this.direction == 0 && this.coinsInUse[i].mesh.position.z + this.roadMesh.position.z <
+                                    humanmesh.position.z + 0.1 && this.coinsInUse[i].mesh.position.z + this.roadMesh.position
+                                    .z > humanmesh.position.z - 0.1) {
+                                    if (this.coinsInUse[i].type == 0) {
+                                        isSpeed = true
+                                    } else if (this.coinsInUse[i].type == 1) {
+                                        isShield = true
+                                    } else if (this.coinsInUse[i].type == 2) {
+                                        score++
+                                        var textGeometry = new THREE.TextGeometry(score, {
+    
+                                            font: font,
+    
+                                            size: 0.3,
+                                            height: 0.02,
+                                    
+                                        })
+                                        var material = new THREE.MeshPhongMaterial({    
+                                            color: 0x0000ff,
+                                            specular:0xffff00,    
+                                            //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                                            shininess:0        
+                                            //指定高光部分的亮度，默认值为30
+                                        });
+                                        scene.remove(scoremesh)
+                                        scoremesh = new THREE.Mesh( textGeometry, material );
+                                        scene.add(scoremesh)
+                                    }
+                                    //console.log("collision")
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 1 && this.coinsInUse[i].mesh.position.z + humanmesh.position
+                                    .x < this.roadMesh.position.x + 0.1 && this.coinsInUse[i].mesh.position.z +
+                                    humanmesh
+                                    .position.x > this.roadMesh.position.x - 0.1) {
+                                    if (this.coinsInUse[i].type == 0) {
+                                        isSpeed = true
+                                    } else if (this.coinsInUse[i].type == 1) {
+                                        isShield = true
+                                    } else if (this.coinsInUse[i].type == 2) {
+                                        score++
+                                        var textGeometry = new THREE.TextGeometry(score, {
+    
+                                            font: font,
+    
+                                            size: 0.3,
+                                            height: 0.02,
+                                    
+                                        })
+                                        var material = new THREE.MeshPhongMaterial({    
+                                            color: 0x0000ff,
+                                            specular:0xffff00,    
+                                            //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                                            shininess:0        
+                                            //指定高光部分的亮度，默认值为30
+                                        });
+                                        scene.remove(scoremesh)
+                                        scoremesh = new THREE.Mesh( textGeometry, material );
+                                        scene.add(scoremesh)
+                                    }
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 2 && this.coinsInUse[i].mesh.position.z + humanmesh.position
+                                    .z < this.roadMesh.position.z + 0.1 && this.coinsInUse[i].mesh.position.z +
+                                    humanmesh
+                                    .position.z > this.roadMesh.position.z - 0.1) {
+                                    if (this.coinsInUse[i].type == 0) {
+                                        isSpeed = true
+                                    } else if (this.coinsInUse[i].type == 1) {
+                                        isShield = true
+                                    } else if (this.coinsInUse[i].type == 2) {
+                                        score++
+                                        var textGeometry = new THREE.TextGeometry(score, {
+    
+                                            font: font,
+    
+                                            size: 0.3,
+                                            height: 0.02,
+                                    
+                                        })
+                                        var material = new THREE.MeshPhongMaterial({    
+                                            color: 0x0000ff,
+                                            specular:0xffff00,    
+                                            //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                                            shininess:0        
+                                            //指定高光部分的亮度，默认值为30
+                                        });
+                                        scene.remove(scoremesh)
+                                        scoremesh = new THREE.Mesh( textGeometry, material );
+                                        scene.add(scoremesh)
+                                    }
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 3 && this.coinsInUse[i].mesh.position.z + this.roadMesh.position
+                                    .x < humanmesh.position.x + 0.1 && this.coinsInUse[i].mesh.position.z + this.roadMesh
+                                    .position.x > humanmesh.position.x - 0.1) {
+                                    if (this.coinsInUse[i].type == 0) {
+                                        isSpeed = true
+                                    } else if (this.coinsInUse[i].type == 1) {
+                                        isShield = true
+                                    } else if (this.coinsInUse[i].type == 2) {
+                                        score++
+                                        var textGeometry = new THREE.TextGeometry(score, {
+    
+                                            font: font,
+    
+                                            size: 0.3,
+                                            height: 0.02,
+                                    
+                                        })
+                                        var material = new THREE.MeshPhongMaterial({    
+                                            color: 0x0000ff,
+                                            specular:0xffff00,    
+                                            //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                                            shininess:0        
+                                            //指定高光部分的亮度，默认值为30
+                                        });
+                                        scene.remove(scoremesh)
+                                        scoremesh = new THREE.Mesh( textGeometry, material );
+                                        scene.add(scoremesh)
+                                    }
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                }
+                            }
+                            if (!isSpeed) {
+                                if (this.direction == 0 && this.coinsInUse[i].mesh.position.z + this.roadMesh.position.z <
+                                    humanmesh.position.z + 0.1 && this.coinsInUse[i].mesh.position.z + this.roadMesh.position
+                                    .z > humanmesh.position.z - 0.1 && (humanmesh.position.x - this.roadMesh.position.x).toFixed(1) == this.coinsInUse[i].mesh.position.x && humanmesh.position.y <= 0.3) {
+                                    if (this.coinsInUse[i].type == 0) {
+                                        isSpeed = true
+                                    } else if (this.coinsInUse[i].type == 1) {
+                                        isShield = true
+                                    } else if (this.coinsInUse[i].type == 2) {
+                                        score++
+                                        var textGeometry = new THREE.TextGeometry(score, {
+    
+                                            font: font,
+    
+                                            size: 0.3,
+                                            height: 0.02,
+                                    
+                                        })
+                                        var material = new THREE.MeshPhongMaterial({    
+                                            color: 0x0000ff,
+                                            specular:0xffff00,    
+                                            //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                                            shininess:0        
+                                            //指定高光部分的亮度，默认值为30
+                                        });
+                                        scene.remove(scoremesh)
+                                        scoremesh = new THREE.Mesh( textGeometry, material );
+                                        scene.add(scoremesh)
+                                    }
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 1 && this.coinsInUse[i].mesh.position.z + humanmesh.position
+                                    .x < this.roadMesh.position.x + 0.1 && this.coinsInUse[i].mesh.position.z +
+                                    humanmesh
+                                    .position.x > this.roadMesh.position.x - 0.1 && (humanmesh.position.z - this.roadMesh.position.z).toFixed(1) == this.coinsInUse[i].mesh.position.x && humanmesh.position.y <= 0.3) {
+                                    if (this.coinsInUse[i].type == 0) {
+                                        isSpeed = true
+                                    } else if (this.coinsInUse[i].type == 1) {
+                                        isShield = true
+                                    } else if (this.coinsInUse[i].type == 2) {
+                                        score++
+                                        var textGeometry = new THREE.TextGeometry(score, {
+    
+                                            font: font,
+    
+                                            size: 0.3,
+                                            height: 0.02,
+                                    
+                                        })
+                                        var material = new THREE.MeshPhongMaterial({    
+                                            color: 0x0000ff,
+                                            specular:0xffff00,    
+                                            //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                                            shininess:0        
+                                            //指定高光部分的亮度，默认值为30
+                                        });
+                                        scene.remove(scoremesh)
+                                        scoremesh = new THREE.Mesh( textGeometry, material );
+                                        scene.add(scoremesh)
+                                    }
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 2 && this.coinsInUse[i].mesh.position.z + humanmesh.position
+                                    .z < this.roadMesh.position.z + 0.1 && this.coinsInUse[i].mesh.position.z +
+                                    humanmesh
+                                    .position.z > this.roadMesh.position.z - 0.1 && (this.roadMesh.position.x - humanmesh.position.x).toFixed(1) == this.coinsInUse[i].mesh.position.x && humanmesh.position.y <= 0.3) {
+                                    if (this.coinsInUse[i].type == 0) {
+                                        isSpeed = true
+                                    } else if (this.coinsInUse[i].type == 1) {
+                                        isShield = true
+                                    } else if (this.coinsInUse[i].type == 2) {
+                                        score++
+                                        var textGeometry = new THREE.TextGeometry(score, {
+    
+                                            font: font,
+    
+                                            size: 0.3,
+                                            height: 0.02,
+                                    
+                                        })
+                                        var material = new THREE.MeshPhongMaterial({    
+                                            color: 0x0000ff,
+                                            specular:0xffff00,    
+                                            //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                                            shininess:0        
+                                            //指定高光部分的亮度，默认值为30
+                                        });
+                                        scene.remove(scoremesh)
+                                        scoremesh = new THREE.Mesh( textGeometry, material );
+                                        scene.add(scoremesh)
+                                    }    
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 3 && this.coinsInUse[i].mesh.position.z + this.roadMesh.position
+                                    .x < humanmesh.position.x + 0.1 && this.coinsInUse[i].mesh.position.z + this.roadMesh
+                                    .position.x > humanmesh.position.x - 0.1 && (this.roadMesh.position.z - humanmesh.position.z).toFixed(1) == this.coinsInUse[i].mesh.position.x && humanmesh.position.y <= 0.3) {
+                                    if (this.coinsInUse[i].type == 0) {
+                                        isSpeed = true
+                                    } else if (this.coinsInUse[i].type == 1) {
+                                        isShield = true
+                                    } else if (this.coinsInUse[i].type == 2) {
+                                        score++
+                                        var textGeometry = new THREE.TextGeometry(score, {
+    
+                                            font: font,
+    
+                                            size: 0.3,
+                                            height: 0.02,
+                                    
+                                        })
+                                        var material = new THREE.MeshPhongMaterial({    
+                                            color: 0x0000ff,
+                                            specular:0xffff00,    
+                                            //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                                            shininess:0        
+                                            //指定高光部分的亮度，默认值为30
+                                        });
+                                        scene.remove(scoremesh)
+                                        scoremesh = new THREE.Mesh( textGeometry, material );
+                                        scene.add(scoremesh)
+                                    }
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 0 && this.coinsInUse[i].mesh.position.z + this.roadMesh.position.z >
+                                    humanmesh.position.z + 1.0) {
+                                    this.roadMesh.remove(this.roadSidesInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 1 && this.coinsInUse[i].mesh.position.z + humanmesh.position
+                                    .x > this.roadMesh.position.x + 1.0) {
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 2 && this.coinsInUse[i].mesh.position.z + humanmesh.position
+                                    .z > this.roadMesh.position.z + 1.0) {
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                } else if (this.direction == 3 && this.coinsInUse[i].mesh.position.z + this.roadMesh.position
+                                    .x > humanmesh.position.x + 1.0) {
+                                    this.roadMesh.remove(this.coinsInUse[i].mesh)
+                                    this.coinsInUse.splice(i, 1)
+                                }
+                            }
+                        }
+                        if (!isSpeed) {
+                            for (var i = 0; i < this.barriers.length; i++) {
+                                if (this.direction == 0 && this.barriers[i].mesh.position.z + this.roadMesh.position.z <
+                                    humanmesh.position.z + 0.15 && this.barriers[i].mesh.position.z + this.roadMesh.position
+                                    .z > humanmesh.position.z - 0.15 && !isJump) {
+                                    if ((this.barriers[i].type == 0 && !isJump) || 
+                                    (this.barriers[i].type == 1 && (humanmesh.position.x - this.roadMesh.position.x <= 0) && !isJump) ||
+                                    (this.barriers[i].type == 2 && (humanmesh.position.x - this.roadMesh.position.x >= 0) && !isJump)) {
+                                        if (this.barriers[i].type && isShield) {
+                                            isShield = false
+                                            shieldTime = 0
+                                            this.barriers.splice(i, 1)
+                                        } else {
+                                            dead = true
+                                        }
+                                    }
+                                } else if (this.direction == 1 && this.barriers[i].mesh.position.z + humanmesh.position
+                                    .x < this.roadMesh.position.x + 0.15 && this.barriers[i].mesh.position.z +
+                                    humanmesh
+                                    .position.x > this.roadMesh.position.x - 0.15 && !isJump) {
+                                    if ((this.barriers[i].type == 0 && !isJump) || 
+                                    (this.barriers[i].type == 1 && (humanmesh.position.z - this.roadMesh.position.z <= 0) && !isJump && !isShield) ||
+                                    (this.barriers[i].type == 2 && (humanmesh.position.z - this.roadMesh.position.z >= 0) && !isJump && !isShield)) {
+                                        if (this.barriers[i].type && isShield) {
+                                            isShield = false
+                                            shieldTime = 0
+                                            this.barriers.splice(i, 1)
+                                        } else {
+                                            dead = true
+                                        }
+                                    }
+                                } else if (this.direction == 2 && this.barriers[i].mesh.position.z + humanmesh.position
+                                    .z < this.roadMesh.position.z + 0.15 && this.barriers[i].mesh.position.z +
+                                    humanmesh
+                                    .position.z > this.roadMesh.position.z - 0.15 && !isJump) {
+                                    if ((this.barriers[i].type == 0 && !isJump) || 
+                                    (this.barriers[i].type == 1 && (humanmesh.position.x - this.roadMesh.position.x >= 0) && !isJump && !isShield) ||
+                                    (this.barriers[i].type == 2 && (humanmesh.position.x - this.roadMesh.position.x <= 0) && !isJump && !isShield)) {
+                                        if (this.barriers[i].type && isShield) {
+                                            isShield = false
+                                            shieldTime = 0
+                                            this.barriers.splice(i, 1)
+                                        } else {
+                                            dead = true
+                                        }
+                                    }
+                                } else if (this.direction == 3 && this.barriers[i].mesh.position.z + this.roadMesh.position
+                                    .x < humanmesh.position.x + 0.15 && this.barriers[i].mesh.position.z + this.roadMesh
+                                    .position.x > humanmesh.position.x - 0.15 && !isJump) {
+                                    if ((this.barriers[i].type == 0 && !isJump) || 
+                                    (this.barriers[i].type == 1 && (humanmesh.position.z - this.roadMesh.position.z >= 0) && !isJump && !isShield) ||
+                                    (this.barriers[i].type == 2 && (humanmesh.position.z - this.roadMesh.position.z <= 0) && !isJump && !isShield)) {
+                                        if (this.barriers[i].type && isShield) {
+                                            isShield = false
+                                            shieldTime = 0
+                                            this.barriers.splice(i, 1)
+                                        } else {
+                                            dead = true
+                                        }
+                                    }
+                                }
+                                if (this.direction == 0 && this.barriers[i].mesh.position.z + this.roadMesh.position.z >
+                                    humanmesh.position.z + 1.0) {
+                                    this.roadMesh.remove(this.barriers[i].mesh)
+                                    this.barriers.splice(i, 1)
+                                } else if (this.direction == 1 && this.barriers[i].mesh.position.z + humanmesh.position
+                                    .x > this.roadMesh.position.x + 1.0) {
+                                    this.roadMesh.remove(this.barriers[i].mesh)
+                                    this.barriers.splice(i, 1)
+                                } else if (this.direction == 2 && this.barriers[i].mesh.position.z + humanmesh.position
+                                    .z > this.roadMesh.position.z + 1.0) {
+                                    this.roadMesh.remove(this.barriers[i].mesh)
+                                    this.barriers.splice(i, 1)
+                                } else if (this.direction == 3 && this.barriers[i].mesh.position.z + this.roadMesh.position
+                                    .x > humanmesh.position.x + 1.0) {
+                                    this.roadMesh.remove(this.barriers[i].mesh)
+                                    this.barriers.splice(i, 1)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+    
+    
+    
+            function setWater() {
+    
+                water = new THREE.Water(
+                    200,
+                    200,
+                    {
+                        textureWidth: 512,
+                        textureHeight: 512,
+                        waterNormals: new THREE.TextureLoader().load( 'GraphicsProjectSrc/images/waternormals.jpg', function ( texture ) {
+                            texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+                        }),
+                        alpha: 	1.0,
+                        sunDirection: directionalLight.position.clone().normalize(),
+                        sunColor: 0xffffff,
+                        waterColor: 0x001e0f,
+                        distortionScale: 3.7,
+                        fog: scene.fog != undefined
+                    }
+                );
+    
+                water.rotation.x = - Math.PI / 2;
+                water.position.y = -0.1
+                water.receiveShadow = true;
+    
+                scene.add( water );
+    
+            }
+            function setSkyBox() {
+                cubeMap = new THREE.CubeTexture( [] );
+                cubeMap.format = THREE.RGBFormat;
+    
+                var loader = new THREE.ImageLoader();
+                loader.load( 'GraphicsProjectSrc/images/skybox.png', function ( image ) {
+    
+                    var getSide = function ( x, y ) {
+    
+                        var size = 1024;
+    
+                        var canvas = document.createElement( 'canvas' );
+                        canvas.width = size;
+                        canvas.height = size;
+    
+                        var context = canvas.getContext( '2d' );
+                        context.drawImage( image, - x * size, - y * size );
+    
+                        return canvas;
+    
+                    };
+    
+                    cubeMap.images[ 0 ] = getSide( 2, 1 ); // px
+                    cubeMap.images[ 1 ] = getSide( 0, 1 ); // nx
+                    cubeMap.images[ 2 ] = getSide( 1, 0 ); // py
+                    cubeMap.images[ 3 ] = getSide( 1, 2 ); // ny
+                    cubeMap.images[ 4 ] = getSide( 1, 1 ); // pz
+                    cubeMap.images[ 5 ] = getSide( 3, 1 ); // nz
+                    cubeMap.needsUpdate = true;
+    
+                } );
+    
+                var cubeShader = THREE.ShaderLib[ 'cube' ];
+                cubeShader.uniforms[ 'tCube' ].value = cubeMap;
+    
+                var skyBoxMaterial = new THREE.ShaderMaterial( {
+                    fragmentShader: cubeShader.fragmentShader,
+                    vertexShader: cubeShader.vertexShader,
+                    uniforms: cubeShader.uniforms,
+                    side: THREE.BackSide
+                } );
+    
+                skyboxmesh = new THREE.Mesh(
+                    new THREE.BoxGeometry( 20, 20, 20 ),
+                    skyBoxMaterial
+                );
+    
+                scene.add( skyboxmesh );
+            }
+    
+            function init() {
+                container = document.createElement('div');
+                document.body.appendChild(container);
+                //
+                camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.001, 10);
+                camera.up.set(0, 1, 0);
+                scene = new THREE.Scene();
+                //
+                scene.add(new THREE.HemisphereLight(0x443333, 0x222233));
+                scene.add(new THREE.AmbientLight(0x222222));
+                directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+                directionalLight.position.set(0, 2, 0.005)
+                directionalLight.castShadow = true
+                scene.add(directionalLight);
+    
+                renderer = new THREE.WebGLRenderer({
+                    antialias: true
+                });
+                renderer.setPixelRatio(window.devicePixelRatio);
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.shadowMap.enabled = true; 
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                container.appendChild(renderer.domElement);
+                //------添加内容
+    
+                // 文字
+                var loader = new THREE.FontLoader();
+                loader.load( 'GraphicsProjectSrc/fonts/' + fontName + '_' + fontWeight + '.typeface.json', function ( response ) {
+                    font = response;
+                    var textGeometry = new THREE.TextGeometry('score', {
+    
+                    font: font,
+    
+                    size: 0.3,
+                    height: 0.02,
+            
+                    })
+                    var material = new THREE.MeshPhongMaterial({    
+                        color: 0x0000ff,
+                        specular:0xffff00,    
+                        //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                        shininess:0        
+                        //指定高光部分的亮度，默认值为30
+                    });
+                    textmesh = new THREE.Mesh( textGeometry, material );
+                    //textMesh.position.set(0, 0, -10)
+                    //textMesh1.rotateX(Math.PI / 2)
+    
+                    //scene.add( textmesh );
+    
+                    var textGeometry = new THREE.TextGeometry(score, {
+    
+                    font: font,
+    
+                    size: 0.2,
+                    height: 0.02,
+            
+                    })
+                    var material = new THREE.MeshPhongMaterial({    
+                        color: 0x0000ff,
+                        specular:0xffff00,    
+                        //指定该材质的光亮程度及其高光部分的颜色，如果设置成和color属性相同的颜色，则会得到另一个更加类似金属的材质，如果设置成grey灰色，则看起来像塑料
+                        shininess:0        
+                        //指定高光部分的亮度，默认值为30
+                    });
+                    scoremesh = new THREE.Mesh( textGeometry, material );
+                    //textMesh.position.set(0, 0, -10)
+                    //textMesh1.rotateX(Math.PI / 2)
+    
+                    //scene.add( scoremesh );
+                })
+    
+                //ground = new THREE.NURBSGround(0, -2, 0, 0.02)
+                //scene.add(ground)
+                roadSideGeometry[0] = new THREE.CylinderBufferGeometry(0.1, 0.1, 0.1, 20, 20);
+                var texture = new THREE.TextureLoader().load('GraphicsProjectSrc/images/roadside.jpg');
+                roadSideMaterial[0] = new THREE.MeshBasicMaterial({
+                    map: texture
+                });
+                roadSideGeometry[1] = new THREE.BoxBufferGeometry(0.1, 0.1, 0.2, 4, 4, 4);
+                var texture = new THREE.TextureLoader().load('GraphicsProjectSrc/images/roadside.jpg');
+                roadSideMaterial[1] = new THREE.MeshBasicMaterial({
+                    map: texture
+                });
+                roadSideGeometry[2] = new THREE.BoxBufferGeometry(0.1, 0.1, 0.4, 4, 4);
+                var texture = new THREE.TextureLoader().load('GraphicsProjectSrc/images/roadside.jpg');
+                roadSideMaterial[2] = new THREE.MeshBasicMaterial({
+                    map: texture
+                });
+    
+                roadGeometry = new THREE.PlaneBufferGeometry(1.0, 22);
+                roadGeometry.rotateX(-Math.PI / 2);
+                var texture = new THREE.TextureLoader().load('GraphicsProjectSrc/images/road.jpg');
+                texture.wrapS = THREE.RepeatWrapping;
+                texture.wrapT = THREE.RepeatWrapping;
+                texture.repeat.set(1, 80);
+                roadMaterial = new THREE.MeshBasicMaterial({
+                    map: texture
+                });
+    
+                itemGeometry = new THREE.PlaneBufferGeometry(0.5, 0.5)
+                speedTexture = new THREE.TextureLoader().load('GraphicsProjectSrc/images/speed1.png')
+                shieldTexture = new THREE.TextureLoader().load('GraphicsProjectSrc/images/protect.png')
+    
+                new THREE.ObjectLoader().load(url, function (loadedObject) {
+    
+                    loadedObject.traverse(function (child) {
+    
+                        if (child instanceof THREE.SkinnedMesh) {
+    
+                            humanmesh = child;
+    
+                        }
+    
+                    });
+    
+                    if (humanmesh === undefined) {
+    
+                        alert('Unable to find a SkinnedMesh in this place:\n\n' + url + '\n\n');
+                        return;
+    
+                    }
+                    humanmesh.scale.set(0.7 / 200, 0.85 / 200, 0.7 / 200);
+                    humanmesh.castShadow = true
+    
+                    // Add mesh and skeleton helper to scene
+    
+                    //humanmesh.rotation.y = - 135 * Math.PI / 180;
+                    scene.add(humanmesh);
+    
+                    skeleton = new THREE.SkeletonHelper(humanmesh);
+                    skeleton.visible = false;
+                    scene.add(skeleton);
+    
+                    // Initialize mixer and clip actions
+    
+                    humanMixer = new THREE.AnimationMixer(humanmesh);
+                    idleAction = humanMixer.clipAction('idle');
+                    walkAction = humanMixer.clipAction('walk');
+                    runAction = humanMixer.clipAction('run');
+                    actions = [idleAction, walkAction, runAction];
+    
+                    setWeight(idleAction, 1);
+                    setWeight(walkAction, 0);
+                    setWeight(runAction, 0);
+    
+                    activateAllActions();
+                    humanmesh.rotation.x = -Math.PI / 2
+                    humanmesh.position.set(0, 10, 0)
+                    camera.position.set(0, 10 + 0.75, 0)
+    
+                });
+                
+                var loader = new THREE.JSONLoader();
+                loader.load( 'GraphicsProjectSrc/models/monster/monster.js', function ( geometry, materials ) {
+    
+                    // adjust color a bit
+    
+                    var material = materials[ 0 ];
+                    material.morphTargets = true;
+                    material.color.setHex( 0xffaaaa );
+    
+                    monstermesh = new THREE.Mesh( geometry, materials );
+    
+                    monstermesh.scale.set( 0.0005, 0.0005, 0.0005 );
+                    monstermesh.rotation.y = Math.PI / 2
+    
+                    scene.add( monstermesh );
+                    monstermesh.position.set( 0, 0, 1.8 );
+                    monsterMixer = new THREE.AnimationMixer( monstermesh );
+    
+                    var clip = THREE.AnimationClip.CreateFromMorphTargetSequence('bd', geometry.morphTargets, 30);
+                    monsterMixer.clipAction(clip).setDuration(1).play();
+    
+                });
+    
+                var myTree = new Tree( {
+                "seed": 262,
+                "segments": 6,
+                "levels": 5,
+                "vMultiplier": 2.36,
+                "twigScale": 1,
+                "initalBranchLength": 0.49,
+                "lengthFalloffFactor": 0.85,
+                "lengthFalloffPower": 0.99,
+                "clumpMax": 0.454,
+                "clumpMin": 0.404,
+                "branchFactor": 2.45,
+                "dropAmount": -0.1,
+                "growAmount": 0.235,
+                "sweepAmount": 0.01,
+                "maxRadius": 0.139,
+                "climbRate": 0.371,
+                "trunkKink": 0.093,
+                "treeSteps": 5,
+                "taperRate": 0.947,
+                "radiusFalloffRate": 0.73,
+                "twistRate": 3.02,
+                "trunkLength": 2.4
+                } );
+    
+                twigsTexture = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/twig-1.png')
+                twigsTexture1 = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/twig-2.png')
+                twigsTexture2 = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/twig-3.png')
+                var trunkGeo = newTreeGeometry(myTree);
+                var trunkMaterial = new THREE.MeshLambertMaterial({
+                    color: 0x9d8062,
+                    roughness: 1.0,
+                    metalness: 0.0,
+                });
+                var trunkMesh = new THREE.Mesh(trunkGeo, trunkMaterial);
+                trunkMesh.scale.set(0.2, 0.2, 0.2)
+                scene.add(trunkMesh); // Use your own scene
+    
+                var twigsGeo = newTreeGeometry(myTree, true);
+                var twigsMaterial = new THREE.MeshLambertMaterial({
+                    color: 0x50f173,
+                    roughness: 1.0,
+                    metalness: 0.0,
+                    map: twigsTexture,
+                    alphaTest: 0.9
+                });
+                var twigsMesh = new THREE.Mesh(twigsGeo, twigsMaterial);
+                twigsMesh.scale.set(0.2, 0.2, 0.2)
+    
+                tree[0] = new THREE.Group();
+                tree[0].add(trunkMesh);
+                tree[0].add(twigsMesh);
+    
+                var trunkGeo = newTreeGeometry(myTree);
+                var trunkMaterial = new THREE.MeshLambertMaterial({
+                    color: 0x9d8062,
+                    roughness: 1.0,
+                    metalness: 0.0,
+                });
+                var trunkMesh = new THREE.Mesh(trunkGeo, trunkMaterial);
+                trunkMesh.scale.set(0.2, 0.2, 0.2)
+                scene.add(trunkMesh); // Use your own scene
+    
+                var twigsGeo = newTreeGeometry(myTree, true);
+                var twigsMaterial = new THREE.MeshLambertMaterial({
+                    color: 0x50f173,
+                    roughness: 1.0,
+                    metalness: 0.0,
+                    map: twigsTexture1,
+                    alphaTest: 0.9
+                });
+                var twigsMesh = new THREE.Mesh(twigsGeo, twigsMaterial);
+                twigsMesh.scale.set(0.2, 0.2, 0.2)
+    
+                tree[1] = new THREE.Group();
+                tree[1].add(trunkMesh);
+                tree[1].add(twigsMesh);
+    
+                var trunkGeo = newTreeGeometry(myTree);
+                var trunkMaterial = new THREE.MeshLambertMaterial({
+                    color: 0x9d8062,
+                    roughness: 1.0,
+                    metalness: 0.0,
+                });
+                var trunkMesh = new THREE.Mesh(trunkGeo, trunkMaterial);
+                trunkMesh.scale.set(0.2, 0.2, 0.2)
+                scene.add(trunkMesh); // Use your own scene
+    
+                var twigsGeo = newTreeGeometry(myTree, true);
+                var twigsMaterial = new THREE.MeshLambertMaterial({
+                    color: 0x50f173,
+                    roughness: 1.0,
+                    metalness: 0.0,
+                    map: twigsTexture2,
+                    alphaTest: 0.9
+                });
+                var twigsMesh = new THREE.Mesh(twigsGeo, twigsMaterial);
+                twigsMesh.scale.set(0.2, 0.2, 0.2)
+    
+                tree[2] = new THREE.Group();
+                tree[2].add(trunkMesh);
+                tree[2].add(twigsMesh);
+    
+    
+    
+    
+    
+                grassPositions1 = new Array(5000)
+                grassPositions2 = new Array(5000)
+                flowerPositions1 = new Array(100)
+                flowerPositions2 = new Array(100)
+                for (var i = 0; i < 5000; i++) {
+                    var position = new THREE.Vector3()
+                    position.x = (Math.random() - 0.5) * 20
+                    position.z = (Math.random() - 0.5) * 20
+                    grassPositions1[i] = position
+                }
+                for (var i = 0; i < 5000; i++) {
+                    var position = new THREE.Vector3()
+                    position.x = (Math.random() - 0.5) * 20
+                    position.z = (Math.random() - 0.5) * 20
+                    grassPositions2[i] = position
+                }
+                for (var i = 0; i < 100; i++) {
+                    var position = new THREE.Vector3()
+                    position.x = (Math.random() - 0.5) * 20
+                    position.z = (Math.random() - 0.5) * 20
+                    flowerPositions1[i] = position
+                }
+                for (var i = 0; i < 100; i++) {
+                    var position = new THREE.Vector3()
+                    position.x = (Math.random() - 0.5) * 20
+                    position.z = (Math.random() - 0.5) * 20
+                    flowerPositions2[i] = position
+                }
+                barkTexture = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/Bark_0008_diffuse.jpg')
+                grasslandTexture = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/grassland.jpg')
+                grassTexture1 = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/grass01.png')
+                grassTexture2 = THREE.ImageUtils.loadTexture('GraphicsProjectSrc//images/grass02.png')
+                flowerTexture1 = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/flowers01.png')
+                flowerTexture2 = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/flowers02.png')
+                coinTexture = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/coin.png')
+                mountainTexture = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/mountain.png')
+                goldenTexture = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/golden.jpg')
+                flagTexture = THREE.ImageUtils.loadTexture('GraphicsProjectSrc/images/flag.jpg')
+                mountainTexture.wrapS = THREE.RepeatWrapping;
+                mountainTexture.wrapT = THREE.RepeatWrapping;
+                mountainTexture.repeat.set(20, 80);
+                grasslandTexture.wrapS = THREE.RepeatWrapping;
+                grasslandTexture.wrapT = THREE.RepeatWrapping;
+                grasslandTexture.repeat.x = 10
+                grasslandTexture.repeat.y = 10
+                grasslandTexture.anisotropy = renderer.getMaxAnisotropy()
+    
+                grassland = new GrassLand()
+    
+                setWater()
+                //天空盒
+                setSkyBox()
+                
+    
+                // 云
+                // var geometry = new THREE.Geometry();
+    
+                // var texture = THREE.ImageUtils.loadTexture( 'GraphicsProjectSrc/cloud10.png', null, animate );
+                // texture.magFilter = THREE.LinearMipMapLinearFilter;
+                // texture.minFilter = THREE.LinearMipMapLinearFilter;
+    
+                // var fog = new THREE.Fog( 0x4584b4, - 100, 3000 );
+    
+                // var material = new THREE.ShaderMaterial( {
+    
+                //     uniforms: {
+    
+                //         "map": { type: "t", value: texture },
+                //         "fogColor" : { type: "c", value: fog.color },
+                //         "fogNear" : { type: "f", value: fog.near },
+                //         "fogFar" : { type: "f", value: fog.far },
+    
+                //     },
+                //     vertexShader: document.getElementById( 'vs' ).textContent,
+                //     fragmentShader: document.getElementById( 'fs' ).textContent,
+                //     depthWrite: false,
+                //     depthTest: true,
+                //     transparent: true
+    
+                // } );
+    
+                // cloudGeometry = new THREE.PlaneGeometry(2, 2)
+                // var plane = new THREE.Mesh( new THREE.PlaneGeometry( 2, 2 ) );
+    
+                // for ( var i = 0; i < 8000; i++ ) {
+                //     var x = (Math.random() * 1000 - 500)/30
+                //     if(x <= 1 && x >= -1) {
+                //         x += 2
+                //     }
+                //     plane.position.x = (Math.random() * 1000 - 500)/30;
+                //     plane.position.y = -1;
+                //     plane.position.z = -i / 200;
+                //     plane.rotation.z = Math.random() * Math.PI;
+                //     //plane.rotation.x = plane.rotation.y = Math.random() * Math.PI * 0.1
+                //     plane.scale.x = plane.scale.y = Math.random() * Math.random() * 1.5 + 0.5;
+    
+                //     THREE.GeometryUtils.merge( geometry, plane );
+    
+                // }
+                // for ( var i = 0; i < 8000; i++ ) {
+    
+                //     plane.position.x = -Math.random() - 0.7;
+                //     plane.position.y = (Math.random() - 0.5) * 3;
+                //     plane.position.z = -i * 0.1;
+                //     plane.rotation.z = Math.random() * Math.PI;
+                //     plane.scale.x = plane.scale.y = Math.random() * Math.random() * 1.5 + 0.5;
+    
+                //     THREE.GeometryUtils.merge( geometry, plane );
+    
+                // }
+                // var cloudmesh = new THREE.Mesh(geometry, material)
+                // scene.add(cloudmesh)
+    
+                //---地板，平面
+                road = new Road();
+                road.roadMesh.position.set(0, 0, -10.5)
+                roads.push(road);
+                scene.add(road.roadMesh);
+                destination[2] -= 21.0
+                var ball = new THREE.SphereGeometry(0.5,100,100);
+                var ballmaterial = new THREE.MeshPhongMaterial({map:goldenTexture,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending});
+                //var ballmaterial1 = new THREE.MeshBasicMaterial({color:0xFFFFFF,transparent:true,blending: THREE.MultiplyBlending});
+                //ballmesh = new THREE.SceneUtils.createMultiMaterialObject(ball,[ballmaterial,ballmaterial1]);
+                ballmesh = new THREE.Mesh(ball,ballmaterial);
+                ballmesh.castShadow = false;
+                ballmesh.receiveShadow = false;
+    
+                var flagmesh = new NURBSFlag(0.4,0.6,0,0.05,180);
+                var flagmesh2 = new NURBSFlag(-0.4,0.6,0,0.05,0);
+                scene.add(flagmesh2);
+                scene.add(flagmesh);
+                //ballmesh.position.set(0,0,0);
+                //scene.add(ballmesh);
+                window.addEventListener('resize', function onWindowResize(event) {
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                    camera.aspect = 0.5 * window.innerWidth / window.innerHeight;
+                    camera.updateProjectionMatrix();
+                }, false);
+               
+            }
+    
+            function activateAllActions() {
+    
+                actions.forEach(function (action) {
+    
+                    action.play();
+                    action.paused = false;
+    
+                });
+    
+            }
+    
+            function pauseAllActions() {
+    
+                actions.forEach(function (action) {
+    
+                    action.paused = true;
+    
+                });
+    
+            }
+    
+            function setWeight(action, weight) {
+    
+                action.enabled = true;
+                action.setEffectiveTimeScale(1);
+                action.setEffectiveWeight(weight);
+    
+            }
+    
+            //
+    
+            function HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, x, y, z) {
+                humanmesh.position.x += x
+                humanmesh.position.y += y
+                humanmesh.position.z += z
+                monstermesh.position.x += x
+                monstermesh.position.y += y
+                monstermesh.position.z += z
+                skyboxmesh.position.x += x
+                skyboxmesh.position.y += y
+                skyboxmesh.position.z += z
+            }
+    
+    
+    
+            function handleKeyDown(event) {
+                // 左转
+                if (String.fromCharCode(event.keyCode) == "A") {
+                    if (roads[currentRoadIndex].complete) {
+                        currentDirection--
+                        if (currentDirection < 0) {
+                            currentDirection = 3
+                        }
+                        if(currentDirection == 0 || currentDirection == 2) {
+                            skyboxmesh.position.x += roads[currentRoadIndex+1].roadMesh.position.x - humanmesh.position.x
+                            humanmesh.position.x = roads[currentRoadIndex+1].roadMesh.position.x
+                            if (currentDirection == 0) {
+                                monstermesh.position.x = roadss[currentRoadIndex+1].roadMesh.position.x
+                                monstermesh.position.z += 1.8
+                            } else if (currentDirection == 2) {
+                                monstermesh.position.x = roadss[currentRoadIndex+1].roadMesh.position.x
+                                monstermesh.position.z -= 1.8
+                            }
+                        } else if(currentDirection == 1 || currentDirection == 3) {
+                            skyboxmesh.position.z += roads[currentRoadIndex+1].roadMesh.position.z - humanmesh.position.z
+                            humanmesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                            if (currentDirection == 1) {
+                                monstermesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                                monstermesh.position.x -= 1.8
+                            } else if (currentDirection == 3) {
+                                monstermesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                                monstermesh.position.x += 1.8
+                            }
+                        }
+                }
+                }
+                // 右转
+                if (String.fromCharCode(event.keyCode) == "D") {
+                    if (roads[currentRoadIndex].complete) {
+                        currentDirection++
+                        if (currentDirection > 3) {
+                            currentDirection = 0
+                        }
+                        if(currentDirection == 0 || currentDirection == 2) {
+                            skyboxmesh.position.x += roads[currentRoadIndex+1].roadMesh.position.x - humanmesh.position.x
+                            humanmesh.position.x = roads[currentRoadIndex+1].roadMesh.position.x
+                            if (currentDirection == 0) {
+                                monstermesh.position.x = roadss[currentRoadIndex+1].roadMesh.position.x
+                                monstermesh.position.z += 1.8
+                            } else if (currentDirection == 2) {
+                                monstermesh.position.x = roadss[currentRoadIndex+1].roadMesh.position.x
+                                monstermesh.position.z -= 1.8
+                            }
+                        } else if(currentDirection == 1 || currentDirection == 3) {
+                            skyboxmesh.position.z += roads[currentRoadIndex+1].roadMesh.position.z - humanmesh.position.z
+                            humanmesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                            if (currentDirection == 1) {
+                                monstermesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                                monstermesh.position.x -= 1.8
+                            } else if (currentDirection == 3) {
+                                monstermesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                                monstermesh.position.x += 1.8
+                            }
+                        }
+                    }
+                }
+                // 调整体态
+                if (String.fromCharCode(event.keyCode) == "W") {
+                    if (drop) {
+                        if (rotationX > -0.9 * Math.PI)
+                        rotationX -= Math.PI / 180
+                        humanmesh.rotation.x = rotationX
+                    }
+                }
+                // ←
+                if (event.keyCode == 37) {
+                    if(currentDirection == 0) {
+                        if(humanmesh.position.x >= roads[currentRoadIndex].roadMesh.position.x) {
+                            //preDestination[0] -= 0.3
+                            HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, -0.3, 0, 0)
+                            //humanmesh.position.x = preDestination[0]
+                        }
+                    }
+                    if(currentDirection == 1) {
+                        if(humanmesh.position.z >= roads[currentRoadIndex].roadMesh.position.z) {
+                            //preDestination[2] -= 0.3
+                            HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0, 0, -0.3)
+                            //humanmesh.position.z = preDestination[2]
+                        }
+                    }
+                    if(currentDirection == 2) {
+                        if(humanmesh.position.x <= roads[currentRoadIndex].roadMesh.position.x) {
+                            //preDestination[0] += 0.3
+                            HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0.3, 0, 0)
+                            //humanmesh.position.x = preDestination[0]
+                        }
+                    }
+                    if(currentDirection == 3) {
+                        if(humanmesh.position.z <= roads[currentRoadIndex].roadMesh.position.z) {
+                            //preDestination[2] += 0.3
+                            HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0, 0, 0.3)
+                            //humanmesh.position.z = preDestination[2]
+                        }
+                    }
+                }
+                // →
+                if (event.keyCode == 39) {
+                    if(currentDirection == 0) {
+                        if(humanmesh.position.x <= roads[currentRoadIndex].roadMesh.position.x) {
+                            //preDestination[0] += 0.3
+                            HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0.3, 0, 0)
+                            //humanmesh.position.x = preDestination[0]
+                        }
+                    }
+                    if(currentDirection == 1) {
+                        if(humanmesh.position.z <= roads[currentRoadIndex].roadMesh.position.z) {
+                            //preDestination[2] += 0.3
+                            HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0, 0, 0.3)
+                            //humanmesh.position.z = preDestination[2]
+                        }
+                    }
+                    if(currentDirection == 2) {
+                        if(humanmesh.position.x >= roads[currentRoadIndex].roadMesh.position.x) {
+                            //preDestination[0] -= 0.3
+                            HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, -0.3, 0, 0)
+                            //humanmesh.position.x = preDestination[0]
+                        }
+                    }
+                    if(currentDirection == 3) {
+                        if(humanmesh.position.z >= roads[currentRoadIndex].roadMesh.position.z) {
+                            //preDestination[2] -= 0.3
+                            HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0, 0, -0.3)
+                            //humanmesh.position.z = preDestination[2]
+                        }
+                    }
+                }
+    
+                // 下蹲    
+                if (String.fromCharCode(event.keyCode) == "S") {
+                    isSpeed = true
+                    //isShield = true
+                }
+                // 跳跃
+                if (String.fromCharCode(event.keyCode) == " ") {
+                    if (!isJump) {
+                            isJump = true
+                        }
+                }
+            }
+    
+    
+    
+            function render() {
+    
+                var delta = clock.getDelta();
+    
+                //scene.add( scoremesh );
+    
+                if (!drop && run) {
+                    scene.add(textmesh)
+                    scene.add(scoremesh)
+                    if (isSpeed) {
+                        speedTime += delta
+                        humanmesh.material.transparent = true;
+                        humanmesh.material.blending = THREE.AdditiveBlending;
+                        if (speedTime >= 5) {
+                            isSpeed = false
+                            speedTime = 0
+                            humanmesh.material.transparent = false;
+                            humanmesh.material.blending = THREE.NormalBlending;
+                        }
+                    }
+    
+                    if (isShield) {
+                        ballmesh.position.set(humanmesh.position.x,humanmesh.position.y+0.4,humanmesh.position.z);
+                        scene.add(ballmesh);
+                        shieldTime += delta
+                        if (shieldTime >= 5) {
+                            isShield = false
+                            shieldTime = 0
+                            scene.remove(ballmesh);
+                        }
+                    } else {
+                        scene.remove(ballmesh)
+                    }
+    
+                    if (isJump) {
+                        pauseAllActions()
+                    } else {
+                        activateAllActions()
+                    }
+                    if (isJump && !getHighest) {
+                        if (humanmesh.position.y < 0.5) {
+                            //HumanMeshTranslate(humanmesh, skyboxmesh, 0, vy * delta / 200, 0)
+                            humanmesh.position.y += vy * delta / 200
+                        } else {
+                            getHighest = true
+                        }
+                    }
+    
+                    if (getHighest) {
+                        if (humanmesh.position.y >= 0) {
+                            //HumanMeshTranslate(humanmesh, skyboxmesh, 0, -vy * delta / 200, 0)
+                            humanmesh.position.y -= vy * delta / 200
+                        } else {
+                            var diff = -humanmesh.position.y
+                            //HumanMeshTranslate(humanmesh, skyboxmesh, 0, diff, 0)
+                            humanmesh.position.y += diff
+                            getHighest = false
+                            isJump = false
+                        }
+                    }
+    
+                    switch (currentDirection) {
+                        case 0:
+                            {
+                                if (humanmesh.position.z > destination[2] - 0.5) {
+                                    if (!isSpeed) {
+                                        HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0, 0, -300 * delta / 200)
+                                        if (humanmesh.position.z <= destination[2] - 0.5) {
+                                            dead = true
+                                        }
+                                    } else {
+                                        HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0, 0, -300 * delta / 50)
+                                        if (humanmesh.position.z > destination[2] - 0.5 && humanmesh.position.z < destination[2] + 0.5) {
+                                            currentDirection = roads[1].direction
+                                            if(currentDirection == 0 || currentDirection == 2) {
+                                                skyboxmesh.position.x += roads[currentRoadIndex+1].roadMesh.position.x - humanmesh.position.x
+                                                humanmesh.position.x = roads[currentRoadIndex+1].roadMesh.position.x
+                                            } else if(currentDirection == 1 || currentDirection == 3) {
+                                                skyboxmesh.position.z += roads[currentRoadIndex+1].roadMesh.position.z - humanmesh.position.z
+                                                humanmesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                                            }
+                                        }
+                                    }
+                                }
+                                camera.position.set(humanmesh.position.x, 0 + 1.5, humanmesh.position.z + 2.0)
+                                camera.lookAt(humanmesh.position.x, 0, humanmesh.position.z - 1.25);
+                                textmesh.position.set(camera.position.x + 4, 2, camera.position.z - 5)
+                                textmesh.rotation.y = 0
+                                scoremesh.position.set(camera.position.x + 5.5, 2, camera.position.z - 5)
+                                scoremesh.rotation.y = 0
+                                humanmesh.rotation.y = 0
+                                monstermesh.rotation.y = Math.PI / 2
+                                monstermesh.position.x = humanmesh.position.x
+                                monstermesh.position.z = humanmesh.position.z + 1.8
+                                break
+                            }
+                        case 1:
+                            {
+                                if (humanmesh.position.x < destination[0] + 0.5) {
+                                    if (!isSpeed) {
+                                        HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 300 * delta / 200, 0, 0)
+                                        if (humanmesh.position.x >= destination[0] + 0.5) {
+                                            dead = true
+                                        }
+                                    } else {
+                                        HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 300 * delta / 50, 0, 0)
+                                        if (humanmesh.position.x < destination[0] + 0.5 && humanmesh.position.x > destination[0] - 0.5) {
+                                            currentDirection = roads[1].direction
+                                            if(currentDirection == 0 || currentDirection == 2) {
+                                                skyboxmesh.position.x += roads[currentRoadIndex+1].roadMesh.position.x - humanmesh.position.x
+                                                humanmesh.position.x = roads[currentRoadIndex+1].roadMesh.position.x
+                                            } else if(currentDirection == 1 || currentDirection == 3) {
+                                                skyboxmesh.position.z += roads[currentRoadIndex+1].roadMesh.position.z - humanmesh.position.z
+                                                humanmesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                                            }
+                                        }
+                                    }
+                                }
+                                camera.position.set(humanmesh.position.x - 2.0, 0 + 1.5, humanmesh.position.z)
+                                camera.lookAt(humanmesh.position.x + 1.25, 0, humanmesh.position.z);
+                                textmesh.position.set(camera.position.x + 5, 2, camera.position.z + 4)
+                                textmesh.rotation.y = -Math.PI / 2
+                                scoremesh.position.set(camera.position.x + 5, 2, camera.position.z + 5.5)
+                                scoremesh.rotation.y = -Math.PI / 2
+                                humanmesh.rotation.y = -Math.PI / 2
+                                monstermesh.rotation.y = 0
+                                monstermesh.position.z = humanmesh.position.z
+                                monstermesh.position.x = humanmesh.position.x - 1.8
+                                break
+                            }
+                        case 2:
+                            {
+                                if (humanmesh.position.z < destination[2] + 0.5) {
+                                    if (!isSpeed) {
+                                        HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0, 0, 300 * delta / 200)
+                                        if (humanmesh.position.z >= destination[2] + 0.5) {
+                                            dead = true
+                                        }
+                                    } else {
+                                        HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, 0, 0, 300 * delta / 50)
+                                        if (humanmesh.position.z < destination[2] + 0.5 && humanmesh.position.z > destination[2] - 0.5) {
+                                            currentDirection = roads[1].direction
+                                            if(currentDirection == 0 || currentDirection == 2) {
+                                                skyboxmesh.position.x += roads[currentRoadIndex+1].roadMesh.position.x - humanmesh.position.x
+                                                humanmesh.position.x = roads[currentRoadIndex+1].roadMesh.position.x
+                                            } else if(currentDirection == 1 || currentDirection == 3) {
+                                                skyboxmesh.position.z += roads[currentRoadIndex+1].roadMesh.position.z - humanmesh.position.z
+                                                humanmesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                                            }
+                                        }
+                                    }
+                                }
+                                camera.position.set(humanmesh.position.x, 0 + 1.5, humanmesh.position.z - 2.0)
+                                camera.lookAt(humanmesh.position.x, 0, humanmesh.position.z + 1.25);
+                                textmesh.position.set(camera.position.x - 4, 2, camera.position.z + 5)
+                                textmesh.rotation.y = Math.PI
+                                scoremesh.position.set(camera.position.x - 5.5, 2, camera.position.z + 5)
+                                scoremesh.rotation.y = Math.PI
+                                humanmesh.rotation.y = Math.PI
+                                monstermesh.rotation.y = -Math.PI / 2
+                                monstermesh.position.x = humanmesh.position.x
+                                monstermesh.position.z = humanmesh.position.z - 1.8
+                                break
+                            }
+                        case 3:
+                            {
+                                if (humanmesh.position.x > destination[0] - 0.5) {
+                                    if (!isSpeed) {
+                                        HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, -300 * delta / 200, 0, 0)
+                                        if (humanmesh.position.x <= destination[0] - 0.5) {
+                                            dead = true
+                                        }
+                                    } else {
+                                        HumanMeshTranslate(humanmesh, skyboxmesh, monstermesh, -300 * delta / 50, 0, 0)    
+                                        if (humanmesh.position.x > destination[0] - 0.5 && humanmesh.position.x < destination[0] + 0.5) {
+                                            currentDirection = roads[1].direction
+                                            if(currentDirection == 0 || currentDirection == 2) {
+                                                skyboxmesh.position.x += roads[currentRoadIndex+1].roadMesh.position.x - humanmesh.position.x
+                                                humanmesh.position.x = roads[currentRoadIndex+1].roadMesh.position.x
+                                            } else if(currentDirection == 1 || currentDirection == 3) {
+                                                skyboxmesh.position.z += roads[currentRoadIndex+1].roadMesh.position.z - humanmesh.position.z
+                                                humanmesh.position.z = roads[currentRoadIndex+1].roadMesh.position.z
+                                            }
+                                        }                           
+                                    }
+                                }
+                                camera.position.set(humanmesh.position.x + 2.0, 0 + 1.5, humanmesh.position.z)
+                                camera.lookAt(humanmesh.position.x - 1.25, 0, humanmesh.position.z);
+                                textmesh.position.set(camera.position.x - 5, 2, camera.position.z - 4)
+                                textmesh.rotation.y = Math.PI / 2
+                                scoremesh.position.set(camera.position.x - 5, 2, camera.position.z - 5.5)
+                                scoremesh.rotation.y = Math.PI / 2
+                                humanmesh.rotation.y = Math.PI / 2
+                                monstermesh.rotation.y = Math.PI
+                                monstermesh.position.z = humanmesh.position.z
+                                monstermesh.position.x = humanmesh.position.x + 1.8
+                                break
+                            }
+                    }
+    
+                    if (!roads[0].startUpdate) {
+                        roads[0].startUpdate = true
+                    }
+                    if (roads.length > 1 && roads[0].complete) {
+                        roads[1].startUpdate = true
+                        if (currentDirection == roads[1].direction) {
+                            currentRoadIndex = 1
+                            if (roads[1].hasChildren) {
+                                scene.remove(roads[0].roadMesh)
+                                roads.splice(0, 1)
+                                currentRoadIndex--
+                            }
+                        }
+                    }
+                    if (roads.length > 1 && roads[0].direction == roads[1].direction) {
+                        switch(roads[0].direction) {
+                            case 0: preDestination[2] = destination[2] + 21.0; break;
+                            case 1: preDestination[0] = destination[0] - 21.0; break;
+                            case 2: preDestination[2] = destination[2] - 21.0; break;
+                            case 3: preDestination[0] = destination[0] + 21.0; break;
+                        }
+                    }
+                    for (var i = 0; i < roads.length; i++) {
+                        for (var j = 0; j < roads[i].coinsInUse.length; j++) {
+                            roads[i].coinsInUse[j].mesh.rotation.y += Math.PI / 45
+                        }
+                        roads[i].update();
+                        roads[i].setFlags();
+                        if (roads[i].nextRoad) {
+                            var rn = RandomNum(0, 3)
+                            //console.log(rn)
+                            // 直行
+                            if (rn == 0) {
+                                road = new Road()
+                                console.log("finish")
+                                // 如果direction为1和3， 说明需要x方向的Road
+                                if (roads[i].direction == 1) {
+                                    road.roadMesh.rotateY(-Math.PI / 2);
+                                }
+                                if (roads[i].direction == 2) {
+                                    road.roadMesh.rotateY(Math.PI);
+                                }
+                                if (roads[i].direction == 3) {
+                                    road.roadMesh.rotateY(Math.PI / 2);
+                                }
+                                road.direction = roads[i].direction
+                                switch (road.direction) {
+                                    case 0:
+                                        destination[2] -= 21.0;
+                                        road.roadMesh.position.set(destination[0], destination[1], destination[2] + 10.5);
+                                        break;
+                                    case 1:
+                                        destination[0] += 21.0;
+                                        road.roadMesh.position.set(destination[0] - 10.5, destination[1], destination[2]);
+                                        break;
+                                    case 2:
+                                        destination[2] += 21.0;
+                                        road.roadMesh.position.set(destination[0], destination[1], destination[2] - 10.5);
+                                        break;
+                                    case 3:
+                                        destination[0] -= 21.0;
+                                        road.roadMesh.position.set(destination[0] + 10.5, destination[1], destination[2]);
+                                        break;
+                                }
+                                scene.add(road.roadMesh);
+                                roads.push(road)
+                            }
+                            // 左转
+                            if (rn == 1) {
+                                road = new Road()
+                                console.log("finish")
+                                if (roads[i].direction == 0) {
+                                    road.roadMesh.rotateY(Math.PI / 2);
+                                }
+                                if (roads[i].direction == 2) {
+                                    road.roadMesh.rotateY(-Math.PI / 2);
+                                }
+                                if (roads[i].direction == 3) {
+                                    road.roadMesh.rotateY(Math.PI);
+                                }
+                                road.direction = roads[i].direction - 1
+                                if (road.direction < 0) {
+                                    road.direction += 4
+                                }
+                                switch (road.direction) {
+                                    case 0:
+                                        //preDestination[0] = destination[0];
+                                        destination[2] -= 21.0;
+                                        road.roadMesh.position.set(destination[0], destination[1], destination[2] + 10.5);
+                                        break;
+                                    case 1:
+                                        //preDestination[2] = destination[2];
+                                        destination[0] += 21.0;
+                                        road.roadMesh.position.set(destination[0] - 10.5, destination[1], destination[2]);
+                                        break;
+                                    case 2:
+                                        //preDestination[0] = destination[0];
+                                        destination[2] += 21.0;
+                                        road.roadMesh.position.set(destination[0], destination[1], destination[2] - 10.5);
+                                        break;
+                                    case 3:
+                                        //preDestination[2] = destination[2];
+                                        destination[0] -= 21.0;
+                                        road.roadMesh.position.set(destination[0] + 10.5, destination[1], destination[2]);
+                                        break;
+                                }
+                                scene.add(road.roadMesh);
+                                roads.push(road)
+                            }
+                            // 右转
+                            if (rn == 2) {
+                                road = new Road()
+                                console.log("finish")
+                                if (roads[i].direction == 0) {
+                                    road.roadMesh.rotateY(-Math.PI / 2);
+                                }
+                                if (roads[i].direction == 1) {
+                                    road.roadMesh.rotateY(Math.PI);
+                                }
+                                if (roads[i].direction == 2) {
+                                    road.roadMesh.rotateY(Math.PI / 2);
+                                }
+                                road.direction = roads[i].direction + 1
+                                if (road.direction > 3) {
+                                    road.direction -= 4
+                                }
+                                switch (road.direction) {
+                                    case 0:
+                                        //preDestination[0] = destination[0];
+                                        destination[2] -= 21.0;
+                                        road.roadMesh.position.set(destination[0], destination[1], destination[2] + 10.5);
+                                        break;
+                                    case 1:
+                                        //preDestination[2] = destination[2];
+                                        destination[0] += 21.0;
+                                        road.roadMesh.position.set(destination[0] - 10.5, destination[1], destination[2]);
+                                        break;
+                                    case 2:
+                                        //preDestination[0] = destination[0];
+                                        destination[2] += 21.0;
+                                        road.roadMesh.position.set(destination[0], destination[1], destination[2] - 10.5);
+                                        break;
+                                    case 3:
+                                        //preDestination[2] = destination[2];
+                                        destination[0] -= 21.0;
+                                        road.roadMesh.position.set(destination[0] + 10.5, destination[1], destination[2]);
+                                        break;
+                                }
+                                scene.add(road.roadMesh);
+                                roads.push(road)
+                            }
+                            preDestination[0] = destination[0]
+                            preDestination[1] = destination[1]
+                            preDestination[2] = destination[2]
+                            roads[i].hasChildren = true
+                            roads[i].nextRoad = false
+                        }
+                    }
+                }
+                humanMixer.update(delta);
+                monsterMixer.update(delta)
+                if (drop) {
+                    humanmesh.position.y -= 0.01
+                    if (rotationX <= -Math.PI / 2) {
+                        rotationX += Math.PI / 1800
+                    } else {
+                        rotationX = -Math.PI / 2
+                    }
+                    setWeight(idleAction, 1 - (rotationX + 0.9 * Math.PI) / (0.4 * Math.PI))
+                    humanmesh.rotation.x = rotationX
+                    camera.position.set(humanmesh.position.x, humanmesh.position.y + 0.75, humanmesh.position.z);
+                    camera.lookAt(humanmesh.position)
+                    if (humanmesh.position.y <= 1) {
+                        humanmesh.position.y = 0
+                        humanmesh.rotation.x = 0
+                        drop = false
+                        run = true
+                        setWeight(idleAction, 0)
+                        setWeight(runAction, 1)
+                    }
+                }
+                directionalLight.position.set(camera.position.x, humanmesh.position.y + 0.75, camera.position.z)
+                directionalLight.target = humanmesh
+                renderer.clear();
+                renderer.render(scene, camera);
+            }
+            function startWebgl() {
+                mask.style.display = 'none'
+                //init();
+                document.addEventListener('keydown', handleKeyDown, false);
+                animate();
+            }
+            function animate() {
+                if (!dead) {
+                    requestAnimationFrame(animate);
+                    render();
+                } else {
+                    alert("YOU ARE DEAD HAHA! You Score is " + score);
+                    //mask.style.display = 'flex'
+                }
+    
+            }
+        </script>
+</body>
+
+</html>

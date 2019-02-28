@@ -1,0 +1,30 @@
+body{
+	padding: 0;
+	margin: 0;
+}
+.mask{
+    background: url("../images/background.jpg") fixed center center no-repeat;
+    background-size: cover;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	position: fixed;
+	width: 100%;
+    height: 100%
+	/* background: rgba(0,0,0,0.4); */
+}
+button.restart{
+	width: 400px;
+	height: 80px;
+	/* border-radius: 20px; */
+	backgroundcolor: 0xFFFFFF;
+	border: none;
+    font-weight: bold;
+    font-size: 40px;
+    color: #0000FF;
+    cursor: pointer;
+}
+/* button.restart:hover{
+	color:#232323;
+} */
